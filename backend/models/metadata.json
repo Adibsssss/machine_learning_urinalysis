@@ -1,43 +1,43 @@
 {
   "best_model_name": "Random Forest",
   "best_params": {
-    "class_weight": "balanced",
+    "class_weight": "None",
     "max_depth": "None",
     "min_samples_leaf": "1",
     "min_samples_split": "2",
-    "n_estimators": "200"
+    "n_estimators": "300"
   },
   "final_metrics": {
-    "Accuracy": 0.9603,
-    "Precision": 0.9723,
-    "Recall": 0.9476,
-    "F1": 0.9598,
-    "ROC-AUC": 0.9797
+    "Accuracy": 0.97,
+    "Precision": 0.9595,
+    "Recall": 0.9595,
+    "F1": 0.9595,
+    "ROC-AUC": 0.989
   },
   "model_comparison": {
     "Logistic Regression": {
-      "Accuracy": 0.8111111111111111,
-      "Recall": 0.8,
-      "F1": 0.8086097754462791,
-      "Precision": 0.8198199253492142
+      "Accuracy": 0.7717846411506823,
+      "Recall": 0.7678019801980198,
+      "F1": 0.7707961049484272,
+      "Precision": 0.776883043496446
     },
     "Decision Tree": {
-      "Accuracy": 0.9126984126984127,
-      "Recall": 0.9142857142857143,
-      "F1": 0.9123045610220422,
-      "Precision": 0.9119046687629497
+      "Accuracy": 0.902778188266588,
+      "Recall": 0.9027326732673266,
+      "F1": 0.9026327043224841,
+      "Precision": 0.9044029198290582
     },
     "Random Forest": {
-      "Accuracy": 0.9595238095238097,
-      "Recall": 0.9444444444444446,
-      "F1": 0.9585108705913008,
-      "Precision": 0.9741445268583352
+      "Accuracy": 0.9543717058272991,
+      "Recall": 0.9385148514851485,
+      "F1": 0.9537500726534566,
+      "Precision": 0.9698254301720688
     },
     "Naive Bayes": {
-      "Accuracy": 0.7611111111111111,
-      "Recall": 0.6904761904761905,
-      "F1": 0.7416283289777266,
-      "Precision": 0.8035874835949617
+      "Accuracy": 0.7489778828629132,
+      "Recall": 0.6685148514851486,
+      "F1": 0.7258583206427204,
+      "Precision": 0.799190182366653
     }
   },
   "class_labels": {
@@ -68,5 +68,10 @@
     "Age_Group"
   ],
   "smote_applied": true,
-  "k_folds": 5
+  "smote_on": "training set only",
+  "k_folds": 5,
+  "kfold_on": "training set only",
+  "train_size": 800,
+  "test_size": 200,
+  "split_ratio": "80/20"
 }

@@ -6,6 +6,12 @@
  Priority : Recall & F1 (medical dataset — minimize false negatives)
  Models   : Logistic Regression, Decision Tree, Random Forest, Naive Bayes
  Tuning   : GridSearchCV scored on Recall
+
+ Validation Strategy:
+   1. Train-test split  80% train / 20% test (test set locked away)
+   2. SMOTE applied ONLY on training set
+   3. K-Fold (5) on training set for model comparison & GridSearchCV
+   4. Final evaluation once on locked test set
 ============================================================
 """
 
@@ -19,7 +25,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.model_selection   import StratifiedKFold, GridSearchCV, cross_val_score, cross_val_predict
+from sklearn.model_selection   import (StratifiedKFold, GridSearchCV,
+                                        cross_val_score, train_test_split)
 from sklearn.preprocessing     import StandardScaler
 from sklearn.metrics           import (classification_report, confusion_matrix,
                                        roc_auc_score, roc_curve, f1_score,
@@ -162,27 +169,52 @@ X["Has_Glucose"]     = (X["Glucose"] > 0).astype(int)
 X["Age_Group"]       = pd.cut(X["Age"], bins=[0, 12, 18, 40, 65, 150],
                                labels=[0, 1, 2, 3, 4]).astype(int)
 
+feature_names = X.columns.tolist()
 print(f"  Features after engineering : {X.shape[1]}")
 
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-feature_names = X.columns.tolist()
-
 # ════════════════════════════════════════════════════════
-# STEP 4 — SMOTE
+# STEP 4 — TRAIN / TEST SPLIT (80 / 20) — TEST SET LOCKED
 # ════════════════════════════════════════════════════════
 print("\n" + "="*60)
-print("  STEP 4 — SMOTE")
+print("  STEP 4 — TRAIN / TEST SPLIT (80/20)")
+print("="*60)
+
+X_train_raw, X_test_raw, y_train, y_test = train_test_split(
+    X, y,
+    test_size    = 0.2,
+    random_state = SEED,
+    stratify     = y       # preserve class ratio in both splits
+)
+
+print(f"  Train size    : {X_train_raw.shape[0]} samples")
+print(f"  Test  size    : {X_test_raw.shape[0]}  samples  ← LOCKED AWAY")
+print(f"  Train class   : {dict(y_train.value_counts())}")
+print(f"  Test  class   : {dict(y_test.value_counts())}")
+
+# Scale — fit ONLY on train, transform both
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train_raw)   # fit + transform train
+X_test_scaled  = scaler.transform(X_test_raw)        # transform test only
+
+# ════════════════════════════════════════════════════════
+# STEP 5 — SMOTE (applied ONLY on training set)
+# ════════════════════════════════════════════════════════
+print("\n" + "="*60)
+print("  STEP 5 — SMOTE (training set only)")
 print("="*60)
 
 smote = SMOTE(random_state=SEED)
-X_resampled, y_resampled = smote.fit_resample(X_scaled, y)
+X_train_resampled, y_train_resampled = smote.fit_resample(X_train_scaled, y_train)
 
-print(f"  Before SMOTE: {dict(pd.Series(y).value_counts())}")
-print(f"  After  SMOTE: {dict(pd.Series(y_resampled).value_counts())}")
+print(f"  Before SMOTE (train): {dict(y_train.value_counts())}")
+print(f"  After  SMOTE (train): {dict(pd.Series(y_train_resampled).value_counts())}")
+print(f"  Test set untouched  : {dict(y_test.value_counts())}  ← no SMOTE applied")
 
+# SMOTE plot
 fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-for ax, data, title in zip(axes, [y, y_resampled], ["Before SMOTE", "After SMOTE"]):
+for ax, data, title in zip(axes,
+                            [y_train, y_train_resampled],
+                            ["Train Before SMOTE", "Train After SMOTE"]):
     counts = pd.Series(data).value_counts()
     ax.bar(["Negative", "Positive"], [counts[0], counts[1]],
            color=["#4C72B0", "#DD8452"], edgecolor="white")
@@ -190,18 +222,20 @@ for ax, data, title in zip(axes, [y, y_resampled], ["Before SMOTE", "After SMOTE
         ax.text(j, c + 3, str(c), ha="center", fontsize=11)
     ax.set_title(title, fontsize=12, fontweight="bold")
     ax.set_ylim(0, max(counts) * 1.2)
-plt.suptitle("Class Balance: Before vs After SMOTE", fontsize=13, fontweight="bold")
+plt.suptitle("Class Balance: Train Before vs After SMOTE\n(Test set kept original — not oversampled)",
+             fontsize=12, fontweight="bold")
 plt.tight_layout()
 plt.savefig(f"{PLOTS}/06_smote_balance.png", dpi=120)
 plt.close()
 
 # ════════════════════════════════════════════════════════
-# STEP 5 — 5-FOLD CV & 4-MODEL COMPARISON
+# STEP 6 — 5-FOLD CV ON TRAINING SET — 4 MODEL COMPARISON
 # ════════════════════════════════════════════════════════
 print("\n" + "="*60)
-print("  STEP 5 — 5-FOLD CV & MODEL COMPARISON")
+print("  STEP 6 — 5-FOLD CV ON TRAINING SET & MODEL COMPARISON")
 print("="*60)
 
+# K-Fold defined on training set only
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
 
 models = {
@@ -213,10 +247,10 @@ models = {
 
 results = {}
 for name, model in models.items():
-    acc  = cross_val_score(model, X_resampled, y_resampled, cv=skf, scoring="accuracy").mean()
-    rec  = cross_val_score(model, X_resampled, y_resampled, cv=skf, scoring="recall").mean()
-    f1   = cross_val_score(model, X_resampled, y_resampled, cv=skf, scoring="f1").mean()
-    prec = cross_val_score(model, X_resampled, y_resampled, cv=skf, scoring="precision").mean()
+    acc  = cross_val_score(model, X_train_resampled, y_train_resampled, cv=skf, scoring="accuracy").mean()
+    rec  = cross_val_score(model, X_train_resampled, y_train_resampled, cv=skf, scoring="recall").mean()
+    f1   = cross_val_score(model, X_train_resampled, y_train_resampled, cv=skf, scoring="f1").mean()
+    prec = cross_val_score(model, X_train_resampled, y_train_resampled, cv=skf, scoring="precision").mean()
     results[name] = {"Accuracy": acc, "Recall": rec, "F1": f1, "Precision": prec}
     print(f"  {name:<22} | Acc={acc:.4f} | Rec={rec:.4f} | F1={f1:.4f} | Prec={prec:.4f}")
 
@@ -248,7 +282,8 @@ for ax, metric, color in zip(axes, metrics, colors):
         ax.spines["right"].set_color("#DD8452")
         ax.spines["right"].set_linewidth(2.5)
 
-fig.suptitle("4-Model Comparison (5-Fold CV)", fontsize=14, fontweight="bold", y=1.02)
+fig.suptitle("4-Model Comparison (5-Fold CV on Training Set)",
+             fontsize=14, fontweight="bold", y=1.02)
 plt.tight_layout()
 plt.savefig(f"{PLOTS}/07_model_comparison.png", dpi=120, bbox_inches="tight")
 plt.close()
@@ -261,7 +296,6 @@ angles += angles[:1]
 
 fig = plt.figure(figsize=(7, 7))
 ax  = fig.add_subplot(111, polar=True)
-
 palette = ["#4C72B0", "#55A868", "#DD8452", "#C44E52"]
 
 for (name, vals), color in zip(results.items(), palette):
@@ -273,17 +307,17 @@ ax.set_xticks(angles[:-1])
 ax.set_xticklabels(cats, size=10, fontweight="bold")
 ax.set_ylim(0, 1)
 ax.legend(loc="upper right", bbox_to_anchor=(1.35, 1.15), fontsize=9)
-ax.set_title("Radar Chart — 4 Models (5-Fold CV)", fontsize=13, fontweight="bold", pad=20)
-
+ax.set_title("Radar Chart — 4 Models (5-Fold CV on Training Set)",
+             fontsize=12, fontweight="bold", pad=20)
 plt.tight_layout()
 plt.savefig(f"{PLOTS}/08_radar_chart.png", dpi=120, bbox_inches="tight")
 plt.close()
 
 # ════════════════════════════════════════════════════════
-# STEP 6 — HYPERPARAMETER TUNING (Best by Recall)
+# STEP 7 — HYPERPARAMETER TUNING (GridSearchCV on Training Set)
 # ════════════════════════════════════════════════════════
 print("\n" + "="*60)
-print("  STEP 6 — HYPERPARAMETER TUNING (Best Model by Recall)")
+print("  STEP 7 — HYPERPARAMETER TUNING (GridSearchCV on Training Set)")
 print("="*60)
 
 best_name = results_df["Recall"].idxmax()
@@ -321,6 +355,7 @@ base_models = {
     "Naive Bayes"        : GaussianNB(),
 }
 
+# GridSearchCV uses the SAME skf (on training set only)
 grid_search = GridSearchCV(
     estimator  = base_models[best_name],
     param_grid = param_grids[best_name],
@@ -330,61 +365,85 @@ grid_search = GridSearchCV(
     refit      = True,
     verbose    = 0
 )
-grid_search.fit(X_resampled, y_resampled)
+grid_search.fit(X_train_resampled, y_train_resampled)
 
 best_model     = grid_search.best_estimator_
 best_params    = grid_search.best_params_
 best_cv_recall = grid_search.best_score_
 
-print(f"  Best Params   : {best_params}")
-print(f"  Best CV Recall: {round(best_cv_recall, 4)}")
+print(f"  Best Params      : {best_params}")
+print(f"  Best CV Recall   : {round(best_cv_recall, 4)}  (on training folds)")
+
+# K-Fold per-fold scores on training set
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+for ax, scoring, color in zip(axes, ["recall", "f1"], ["#DD8452", "#55A868"]):
+    scores = cross_val_score(best_model, X_train_resampled, y_train_resampled,
+                             cv=skf, scoring=scoring)
+    ax.bar([f"Fold {i+1}" for i in range(5)], scores, color=color, alpha=0.85, edgecolor="white")
+    ax.axhline(scores.mean(), color="black", linestyle="--", linewidth=1.5,
+               label=f"Mean = {scores.mean():.4f}")
+    for j, sc in enumerate(scores):
+        ax.text(j, sc + 0.003, f"{sc:.3f}", ha="center", fontsize=9)
+    ax.set_title(f"5-Fold {scoring.upper()} Scores (Training Set)", fontsize=12, fontweight="bold")
+    ax.set_ylim(0, 1.1)
+    ax.legend()
+    ax.set_ylabel("Score")
+plt.suptitle(f"K-Fold (5) Recall & F1 — {best_name} (Tuned) — Training Set Only",
+             fontsize=12, fontweight="bold")
+plt.tight_layout()
+plt.savefig(f"{PLOTS}/12_kfold_scores.png", dpi=120)
+plt.close()
 
 # ════════════════════════════════════════════════════════
-# STEP 7 — FINAL MODEL EVALUATION
+# STEP 8 — FINAL EVALUATION ON LOCKED TEST SET (run once)
 # ════════════════════════════════════════════════════════
 print("\n" + "="*60)
-print("  STEP 7 — FINAL MODEL EVALUATION")
+print("  STEP 8 — FINAL EVALUATION ON LOCKED TEST SET")
 print("="*60)
+print("  ⚠  Test set has NEVER been seen during training or tuning.")
 
-y_pred = cross_val_predict(best_model, X_resampled, y_resampled, cv=skf)
-y_prob = cross_val_predict(best_model, X_resampled, y_resampled,
-                            cv=skf, method="predict_proba")[:, 1]
+# Fit best model on full training set, predict on test set
+best_model.fit(X_train_resampled, y_train_resampled)
+
+y_pred = best_model.predict(X_test_scaled)
+y_prob = best_model.predict_proba(X_test_scaled)[:, 1]
 
 final_metrics = {
-    "Accuracy" : round(accuracy_score(y_resampled, y_pred), 4),
-    "Precision": round(precision_score(y_resampled, y_pred), 4),
-    "Recall"   : round(recall_score(y_resampled, y_pred), 4),
-    "F1"       : round(f1_score(y_resampled, y_pred), 4),
-    "ROC-AUC"  : round(roc_auc_score(y_resampled, y_prob), 4),
+    "Accuracy" : round(accuracy_score(y_test, y_pred), 4),
+    "Precision": round(precision_score(y_test, y_pred), 4),
+    "Recall"   : round(recall_score(y_test, y_pred), 4),
+    "F1"       : round(f1_score(y_test, y_pred), 4),
+    "ROC-AUC"  : round(roc_auc_score(y_test, y_prob), 4),
 }
 
+print("\n  Final Test Set Metrics:")
 for k, v in final_metrics.items():
     flag = " ⭐" if k in ["Recall", "F1"] else ""
     print(f"  {k:<12}: {v}{flag}")
 
-print("\n  Classification Report:")
-print(classification_report(y_resampled, y_pred, target_names=["Negative", "Positive"]))
+print("\n  Classification Report (Test Set):")
+print(classification_report(y_test, y_pred, target_names=["Negative", "Positive"]))
 
 # Confusion Matrix
-cm = confusion_matrix(y_resampled, y_pred)
+cm = confusion_matrix(y_test, y_pred)
 fig, ax = plt.subplots(figsize=(6, 5))
 sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax,
             xticklabels=["Pred Neg", "Pred Pos"],
             yticklabels=["Act Neg",  "Act Pos"])
-ax.set_title(f"Confusion Matrix — {best_name}")
+ax.set_title(f"Confusion Matrix — {best_name} (Test Set)", fontsize=12, fontweight="bold")
 plt.tight_layout()
 plt.savefig(f"{PLOTS}/09_confusion_matrix.png", dpi=120)
 plt.close()
 
 # ROC Curve
-fpr, tpr, _ = roc_curve(y_resampled, y_prob)
+fpr, tpr, _ = roc_curve(y_test, y_prob)
 fig, ax = plt.subplots(figsize=(7, 5))
 ax.plot(fpr, tpr, color="#DD8452", lw=2.5, label=f"AUC = {final_metrics['ROC-AUC']}")
 ax.plot([0, 1], [0, 1], "k--", lw=1.2, alpha=0.5)
 ax.fill_between(fpr, tpr, alpha=0.15, color="#DD8452")
 ax.set_xlabel("False Positive Rate")
 ax.set_ylabel("True Positive Rate")
-ax.set_title(f"ROC Curve — {best_name}")
+ax.set_title(f"ROC Curve — {best_name} (Test Set)", fontsize=12, fontweight="bold")
 ax.legend()
 plt.tight_layout()
 plt.savefig(f"{PLOTS}/10_roc_curve.png", dpi=120)
@@ -402,29 +461,11 @@ if hasattr(best_model, "feature_importances_"):
     plt.savefig(f"{PLOTS}/11_feature_importance.png", dpi=120)
     plt.close()
 
-# K-Fold Recall & F1 per fold
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-for ax, scoring, color in zip(axes, ["recall", "f1"], ["#DD8452", "#55A868"]):
-    scores = cross_val_score(best_model, X_resampled, y_resampled, cv=skf, scoring=scoring)
-    ax.bar([f"Fold {i+1}" for i in range(5)], scores, color=color, alpha=0.85, edgecolor="white")
-    ax.axhline(scores.mean(), color="black", linestyle="--", linewidth=1.5,
-               label=f"Mean = {scores.mean():.4f}")
-    for j, sc in enumerate(scores):
-        ax.text(j, sc + 0.003, f"{sc:.3f}", ha="center", fontsize=9)
-    ax.set_title(f"5-Fold {scoring.upper()} Scores", fontsize=12, fontweight="bold")
-    ax.set_ylim(0, 1.1)
-    ax.legend()
-    ax.set_ylabel("Score")
-plt.suptitle(f"K-Fold (5) Recall & F1 — {best_name} (Tuned)", fontsize=13, fontweight="bold")
-plt.tight_layout()
-plt.savefig(f"{PLOTS}/12_kfold_scores.png", dpi=120)
-plt.close()
-
 # ════════════════════════════════════════════════════════
-# STEP 8 — SAVE MODEL & ARTEFACTS
+# STEP 9 — SAVE MODEL & ARTEFACTS
 # ════════════════════════════════════════════════════════
 print("\n" + "="*60)
-print("  STEP 8 — SAVE MODEL & ARTEFACTS")
+print("  STEP 9 — SAVE MODEL & ARTEFACTS")
 print("="*60)
 
 with open(os.path.join(MODELS, "best_model.pkl"), "wb") as f:
@@ -435,15 +476,20 @@ with open(os.path.join(MODELS, "feature_names.json"), "w") as f:
     json.dump(feature_names, f)
 
 metadata = {
-    "best_model_name" : best_name,
-    "best_params"     : {k: str(v) for k, v in best_params.items()},
-    "final_metrics"   : final_metrics,
-    "model_comparison": {m: {k: float(v) for k, v in vals.items()}
-                         for m, vals in results.items()},
-    "class_labels"    : {0: "Negative", 1: "Positive"},
-    "features"        : feature_names,
-    "smote_applied"   : True,
-    "k_folds"         : 5,
+    "best_model_name"  : best_name,
+    "best_params"      : {k: str(v) for k, v in best_params.items()},
+    "final_metrics"    : final_metrics,
+    "model_comparison" : {m: {k: float(v) for k, v in vals.items()}
+                          for m, vals in results.items()},
+    "class_labels"     : {0: "Negative", 1: "Positive"},
+    "features"         : feature_names,
+    "smote_applied"    : True,
+    "smote_on"         : "training set only",
+    "k_folds"          : 5,
+    "kfold_on"         : "training set only",
+    "train_size"       : int(X_train_raw.shape[0]),
+    "test_size"        : int(X_test_raw.shape[0]),
+    "split_ratio"      : "80/20",
 }
 with open(os.path.join(MODELS, "metadata.json"), "w") as f:
     json.dump(metadata, f, indent=2)
@@ -456,7 +502,11 @@ print(f"  EDA plots      : {len(os.listdir(PLOTS))} files saved")
 print("\n" + "="*60)
 print("  PIPELINE COMPLETE")
 print("="*60)
-print(f"\n  Best Model  : {best_name}")
-print(f"  Recall      : {final_metrics['Recall']}")
-print(f"  F1 Score    : {final_metrics['F1']}")
-print(f"  ROC-AUC     : {final_metrics['ROC-AUC']}")
+print(f"\n  🏆 Best Model  : {best_name}")
+print(f"  🎯 Recall      : {final_metrics['Recall']}  (on test set)")
+print(f"  🎯 F1 Score    : {final_metrics['F1']}  (on test set)")
+print(f"  📊 ROC-AUC     : {final_metrics['ROC-AUC']}  (on test set)")
+print(f"\n  Split          : 80% train ({X_train_raw.shape[0]}) / 20% test ({X_test_raw.shape[0]})")
+print(f"  SMOTE on       : training set only")
+print(f"  K-Fold on      : training set only")
+print(f"  Final eval on  : locked test set (run once)")
